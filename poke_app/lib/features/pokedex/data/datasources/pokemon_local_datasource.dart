@@ -1,4 +1,4 @@
-import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../models/pokemon_model.dart';
 
 abstract class PokemonLocalDataSource {
@@ -10,6 +10,7 @@ abstract class PokemonLocalDataSource {
   Future<void> addToFavorites(PokemonModel pokemon);
   Future<void> removeFromFavorites(int pokemonId);
   Future<bool> isFavorite(int pokemonId);
+  Future<void> clearAllCache();
 }
 
 class PokemonLocalDataSourceImpl implements PokemonLocalDataSource {
@@ -21,11 +22,48 @@ class PokemonLocalDataSourceImpl implements PokemonLocalDataSource {
     final box = await Hive.openBox(pokemonBoxName);
     final cachedList = box.get('pokemon_list') as List?;
 
-    if (cachedList == null) return [];
+    if (cachedList == null) {
+      print('💾 CACHE DEBUG: No hay lista cacheada');
+      return [];
+    }
 
-    return cachedList
-        .map((json) => PokemonModel.fromJson(Map<String, dynamic>.from(json)))
-        .toList();
+    final pokemonModels =
+        cachedList
+            .map(
+              (json) => PokemonModel.fromJson(Map<String, dynamic>.from(json)),
+            )
+            .toList();
+
+    print(
+      '💾 CACHE DEBUG: Lista cacheada tiene ${pokemonModels.length} pokémon',
+    );
+
+    // ELIMINAR DUPLICADOS AUTOMÁTICAMENTE
+    final seenIds = <int>{};
+    final uniquePokemon = <PokemonModel>[];
+    final duplicates = <PokemonModel>[];
+
+    for (var pokemon in pokemonModels) {
+      if (seenIds.contains(pokemon.id)) {
+        duplicates.add(pokemon);
+        print(
+          '💾 CACHE DEBUG: ¡DUPLICADO ELIMINADO! ${pokemon.name} (ID: ${pokemon.id})',
+        );
+      } else {
+        seenIds.add(pokemon.id);
+        uniquePokemon.add(pokemon);
+      }
+    }
+
+    // Si había duplicados, actualizar el caché con la lista limpia
+    if (duplicates.isNotEmpty) {
+      print(
+        '💾 CACHE DEBUG: ¡Se eliminaron ${duplicates.length} duplicados! Actualizando caché...',
+      );
+      await cachePokemonList(uniquePokemon);
+    }
+
+    return uniquePokemon;
   }
 
   @override
@@ -41,14 +79,45 @@ class PokemonLocalDataSourceImpl implements PokemonLocalDataSource {
   @override
   Future<void> cachePokemonList(List<PokemonModel> pokemonList) async {
     final box = await Hive.openBox(pokemonBoxName);
-    final jsonList = pokemonList.map((pokemon) => pokemon.toJson()).toList();
+
+    print('💾 CACHE DEBUG: Guardando ${pokemonList.length} pokémon en caché');
+
+    // ELIMINAR DUPLICADOS ANTES DE GUARDAR
+    final seenIds = <int>{};
+    final uniquePokemon = <PokemonModel>[];
+
+    for (var pokemon in pokemonList) {
+      if (!seenIds.contains(pokemon.id)) {
+        seenIds.add(pokemon.id);
+        uniquePokemon.add(pokemon);
+      } else {
+        print(
+          '💾 CACHE DEBUG: Duplicado evitado al guardar: ${pokemon.name} (ID: ${pokemon.id})',
+        );
+      }
+    }
+
+    final jsonList = uniquePokemon.map((pokemon) => pokemon.toJson()).toList();
     await box.put('pokemon_list', jsonList);
+    print(
+      '💾 CACHE DEBUG: ${uniquePokemon.length} pokémon únicos guardados en caché',
+    );
   }
 
   @override
   Future<void> cachePokemon(PokemonModel pokemon) async {
     final box = await Hive.openBox(pokemonBoxName);
     await box.put('pokemon_${pokemon.id}', pokemon.toJson());
+    print(
+      '💾 CACHE DEBUG: Pokémon individual guardado: ${pokemon.name} (ID: ${pokemon.id})',
+    );
+  }
+
+  @override
+  Future<void> clearAllCache() async {
+    final pokemonBox = await Hive.openBox(pokemonBoxName);
+    await pokemonBox.clear();
+    print('💾 CACHE DEBUG: ¡Caché completamente limpiado!');
   }
 
   @override

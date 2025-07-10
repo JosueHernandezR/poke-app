@@ -49,14 +49,22 @@ class PokemonRepositoryImpl implements PokemonRepository {
       }
 
       // Si es la primera carga (offset 0), reemplazar caché
-      // Si es carga adicional, agregar al caché existente
+      // Si es carga adicional, agregar al caché existente SOLO si no existen
       if (offset == 0) {
         await localDataSource.cachePokemonList(pokemonList);
       } else {
-        // Para cargas adicionales, agregar al caché existente
+        // Para cargas adicionales, verificar duplicados antes de agregar
         final existingCache = await localDataSource.getCachedPokemonList();
-        final updatedCache = [...existingCache, ...pokemonList];
-        await localDataSource.cachePokemonList(updatedCache);
+        final existingIds = existingCache.map((p) => p.id).toSet();
+
+        // Solo agregar pokémon que no existen en el caché
+        final newPokemon =
+            pokemonList.where((p) => !existingIds.contains(p.id)).toList();
+
+        if (newPokemon.isNotEmpty) {
+          final updatedCache = [...existingCache, ...newPokemon];
+          await localDataSource.cachePokemonList(updatedCache);
+        }
       }
 
       return Right(pokemonList.map((model) => model.toEntity()).toList());
@@ -110,7 +118,7 @@ class PokemonRepositoryImpl implements PokemonRepository {
               )
               .toList();
 
-      // Si encontramos resultados en caché, los devolvemos
+      // Si encontramos resultados en caché, devolverlos inmediatamente
       if (filteredPokemon.isNotEmpty) {
         return Right(filteredPokemon.map((model) => model.toEntity()).toList());
       }
@@ -123,8 +131,19 @@ class PokemonRepositoryImpl implements PokemonRepository {
         );
         final pokemon = PokemonModel.fromPokeApiJson(response);
 
-        // Guardar en caché para futuras búsquedas
+        // Guardar en caché individual para futuras búsquedas
         await localDataSource.cachePokemon(pokemon);
+
+        // También agregarlo a la lista principal cacheada si no existe
+        final existingCachedList = await localDataSource.getCachedPokemonList();
+        final existsInMainCache = existingCachedList.any(
+          (p) => p.id == pokemon.id,
+        );
+
+        if (!existsInMainCache) {
+          final updatedCache = [...existingCachedList, pokemon];
+          await localDataSource.cachePokemonList(updatedCache);
+        }
 
         return Right([pokemon.toEntity()]);
       } catch (e) {
@@ -135,8 +154,20 @@ class PokemonRepositoryImpl implements PokemonRepository {
             final response = await remoteDataSource.getPokemonById(id);
             final pokemon = PokemonModel.fromPokeApiJson(response);
 
-            // Guardar en caché para futuras búsquedas
+            // Guardar en caché individual para futuras búsquedas
             await localDataSource.cachePokemon(pokemon);
+
+            // También agregarlo a la lista principal cacheada si no existe
+            final existingCachedList =
+                await localDataSource.getCachedPokemonList();
+            final existsInMainCache = existingCachedList.any(
+              (p) => p.id == pokemon.id,
+            );
+
+            if (!existsInMainCache) {
+              final updatedCache = [...existingCachedList, pokemon];
+              await localDataSource.cachePokemonList(updatedCache);
+            }
 
             return Right([pokemon.toEntity()]);
           }
@@ -236,5 +267,10 @@ class PokemonRepositoryImpl implements PokemonRepository {
     } catch (e) {
       return Left(CacheFailure(message: 'Error al verificar favorito: $e'));
     }
+  }
+
+  // Método para limpiar el caché (útil para debugging)
+  Future<void> clearCache() async {
+    await localDataSource.clearAllCache();
   }
 }

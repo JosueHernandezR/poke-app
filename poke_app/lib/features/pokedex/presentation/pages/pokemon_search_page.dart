@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/di/injection_container.dart' as di;
 import '../../../../core/theme/pokemon_colors.dart';
+import '../../domain/repositories/pokemon_repository.dart';
+import '../../data/repositories/pokemon_repository_impl.dart';
 import '../bloc/pokemon_bloc.dart';
 
 class PokemonSearchPage extends StatefulWidget {
@@ -29,7 +31,14 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_onSearchChanged);
+  }
+
+  void _initializePokemonData(BuildContext context) {
+    // Cargar la lista inicial de Pokémon para poder buscar localmente
+    // Usar más Pokémon para tener una mejor base de búsqueda
+    context.read<PokemonBloc>().add(
+      const LoadPokemonListEvent(offset: 0, limit: 300),
+    );
   }
 
   @override
@@ -37,29 +46,6 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
-  }
-
-  void _onSearchChanged() {
-    if (_blocContext == null) return;
-
-    final query = _searchController.text.trim();
-    if (query.isNotEmpty) {
-      // Debounce la búsqueda para no hacer demasiadas llamadas
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted &&
-            _searchController.text.trim() == query &&
-            _blocContext != null) {
-          _blocContext!.read<PokemonBloc>().add(
-            SearchPokemonEvent(query: query),
-          );
-        }
-      });
-    } else {
-      // Si el campo está vacío, limpiar los resultados de búsqueda
-      _blocContext!.read<PokemonBloc>().add(
-        const SearchPokemonEvent(query: ''),
-      );
-    }
   }
 
   @override
@@ -73,12 +59,31 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
 
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _searchFocusNode.requestFocus();
+            _initializePokemonData(context);
           });
 
           return Scaffold(
             appBar: AppBar(
               title: const Text('Buscar Pokémon'),
               actions: [
+                // Botón temporal para limpiar caché
+                IconButton(
+                  icon: const Icon(Icons.delete_sweep),
+                  onPressed: () async {
+                    // Limpiar caché
+                    final repository = di.sl<PokemonRepository>();
+                    if (repository is PokemonRepositoryImpl) {
+                      await repository.clearCache();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Caché limpiado'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                  tooltip: 'Limpiar caché',
+                ),
                 IconButton(
                   icon: const Icon(Icons.tune),
                   onPressed: () => _showFiltersBottomSheet(context),
@@ -93,6 +98,18 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
                   child: TextField(
                     controller: _searchController,
                     focusNode: _searchFocusNode,
+                    onChanged: (value) {
+                      // Búsqueda directa en tiempo real
+                      if (_blocContext != null) {
+                        print('🔍 ON CHANGED: Nuevo valor: "$value"');
+                        _blocContext!.read<PokemonBloc>().add(
+                          LocalSearchEvent(
+                            query: value.trim(),
+                            selectedTypes: _selectedTypes,
+                          ),
+                        );
+                      }
+                    },
                     decoration: InputDecoration(
                       hintText: 'Buscar por nombre o número...',
                       prefixIcon: const Icon(Icons.search),
@@ -102,6 +119,15 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
                                 icon: const Icon(Icons.clear),
                                 onPressed: () {
                                   _searchController.clear();
+                                  // Limpiar búsqueda cuando se presiona clear
+                                  if (_blocContext != null) {
+                                    _blocContext!.read<PokemonBloc>().add(
+                                      const LocalSearchEvent(
+                                        query: '',
+                                        selectedTypes: [],
+                                      ),
+                                    );
+                                  }
                                 },
                               )
                               : null,
@@ -134,6 +160,14 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
                                 setState(() {
                                   _selectedTypes.remove(type);
                                 });
+
+                                // Actualizar la búsqueda cuando se quita un filtro
+                                _blocContext?.read<PokemonBloc>().add(
+                                  LocalSearchEvent(
+                                    query: _searchController.text.trim(),
+                                    selectedTypes: _selectedTypes,
+                                  ),
+                                );
                               },
                               onSelected: (selected) {},
                             ),
@@ -152,6 +186,14 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
                                 setState(() {
                                   _selectedGeneration = 'Todas';
                                 });
+
+                                // Actualizar la búsqueda cuando se quita el filtro de generación
+                                _blocContext?.read<PokemonBloc>().add(
+                                  LocalSearchEvent(
+                                    query: _searchController.text.trim(),
+                                    selectedTypes: _selectedTypes,
+                                  ),
+                                );
                               },
                               onSelected: (selected) {},
                             ),
@@ -162,90 +204,105 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
 
                 // Content
                 Expanded(
-                  child: BlocBuilder<PokemonBloc, PokemonState>(
-                    builder: (context, state) {
-                      if (state is PokemonLoading) {
-                        return const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircularProgressIndicator(),
-                              SizedBox(height: 16),
-                              Text('Buscando Pokémon...'),
-                            ],
+                  child: BlocListener<PokemonBloc, PokemonState>(
+                    listener: (context, state) {
+                      // Cuando se cargan los datos iniciales, aplicar búsqueda si hay texto
+                      if (state is PokemonListLoaded &&
+                          _searchController.text.trim().isNotEmpty) {
+                        // Aplicar la búsqueda actual a los datos recién cargados
+                        context.read<PokemonBloc>().add(
+                          LocalSearchEvent(
+                            query: _searchController.text.trim(),
+                            selectedTypes: _selectedTypes,
                           ),
                         );
                       }
+                    },
+                    child: BlocBuilder<PokemonBloc, PokemonState>(
+                      builder: (context, state) {
+                        if (state is PokemonLoading) {
+                          return const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 16),
+                                Text('Buscando Pokémon...'),
+                              ],
+                            ),
+                          );
+                        }
 
-                      if (state is PokemonError) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.error_outline,
-                                size: 64,
-                                color: Colors.red,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Error: ${state.message}',
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: () {
-                                  final query = _searchController.text.trim();
-                                  if (query.isNotEmpty) {
-                                    context.read<PokemonBloc>().add(
-                                      SearchPokemonEvent(query: query),
-                                    );
-                                  }
-                                },
-                                child: const Text('Reintentar'),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      if (state is PokemonSearchLoaded) {
-                        if (state.searchResults.isEmpty &&
-                            state.query.isNotEmpty) {
+                        if (state is PokemonError) {
                           return Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 const Icon(
-                                  Icons.search_off,
+                                  Icons.error_outline,
                                   size: 64,
-                                  color: Colors.grey,
+                                  color: Colors.red,
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  'No se encontraron resultados para "${state.query}"',
+                                  'Error: ${state.message}',
                                   textAlign: TextAlign.center,
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium,
                                 ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Intenta con otro nombre o número',
-                                  textAlign: TextAlign.center,
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    final query = _searchController.text.trim();
+                                    if (query.isNotEmpty) {
+                                      context.read<PokemonBloc>().add(
+                                        SearchPokemonEvent(query: query),
+                                      );
+                                    }
+                                  },
+                                  child: const Text('Reintentar'),
                                 ),
                               ],
                             ),
                           );
                         }
 
-                        if (state.searchResults.isNotEmpty) {
-                          return _buildSearchResults(state.searchResults);
-                        }
-                      }
+                        if (state is PokemonSearchLoaded) {
+                          if (state.searchResults.isEmpty &&
+                              state.query.isNotEmpty) {
+                            return Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.search_off,
+                                    size: 64,
+                                    color: Colors.grey,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No se encontraron resultados para "${state.query}"',
+                                    textAlign: TextAlign.center,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'Intenta con otro nombre o número',
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
 
-                      // Estado inicial (PokemonInitial) o búsqueda vacía - mostrar sugerencias
-                      return _buildEmptyState();
-                    },
+                          if (state.searchResults.isNotEmpty) {
+                            return _buildSearchResults(state.searchResults);
+                          }
+                        }
+
+                        // Estado inicial (PokemonInitial) o búsqueda vacía - mostrar sugerencias
+                        return _buildEmptyState();
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -511,11 +568,12 @@ class _PokemonSearchPageState extends State<PokemonSearchPage> {
                           onPressed: () {
                             Navigator.of(context).pop();
                             setState(() {});
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Filtros avanzados próximamente!',
-                                ),
+
+                            // Aplicar los filtros usando el nuevo evento
+                            _blocContext?.read<PokemonBloc>().add(
+                              LocalSearchEvent(
+                                query: _searchController.text.trim(),
+                                selectedTypes: _selectedTypes,
                               ),
                             );
                           },

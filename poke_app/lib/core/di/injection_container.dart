@@ -10,6 +10,7 @@ import '../../features/pokedex/domain/repositories/pokemon_repository.dart';
 import '../../features/pokedex/domain/usecases/get_pokemon_list.dart';
 import '../../features/pokedex/domain/usecases/get_pokemon_by_id.dart';
 import '../../features/pokedex/domain/usecases/search_pokemon.dart';
+import '../../features/pokedex/domain/usecases/get_pokemon_by_type.dart';
 import '../../features/pokedex/presentation/bloc/pokemon_bloc.dart';
 
 final sl = GetIt.instance;
@@ -48,6 +49,7 @@ Future<void> init() async {
   sl.registerLazySingleton(() => GetPokemonList(sl()));
   sl.registerLazySingleton(() => GetPokemonById(sl()));
   sl.registerLazySingleton(() => SearchPokemon(sl()));
+  sl.registerLazySingleton(() => GetPokemonByType(sl()));
 
   // BLoC - Cada página tendrá su propia instancia
   sl.registerFactory(
@@ -55,6 +57,7 @@ Future<void> init() async {
       getPokemonList: sl(),
       getPokemonById: sl(),
       searchPokemon: sl(),
+      getPokemonByType: sl(),
     ),
   );
 }

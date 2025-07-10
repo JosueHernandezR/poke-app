@@ -39,6 +39,25 @@ class SearchPokemonEvent extends PokemonEvent {
   List<Object> get props => [query];
 }
 
+class LocalSearchEvent extends PokemonEvent {
+  final String query;
+  final List<String> selectedTypes;
+
+  const LocalSearchEvent({required this.query, this.selectedTypes = const []});
+
+  @override
+  List<Object> get props => [query, selectedTypes];
+}
+
+class FilterByTypesEvent extends PokemonEvent {
+  final List<String> types;
+
+  const FilterByTypesEvent({required this.types});
+
+  @override
+  List<Object> get props => [types];
+}
+
 class RefreshPokemonListEvent extends PokemonEvent {
   const RefreshPokemonListEvent();
 }
